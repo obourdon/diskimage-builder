@@ -68,7 +68,8 @@ for MOUNTPOINT in "${SPLIT_MOUNTS[@]}"; do
     if [ "${MOUNTPOINT}" != "/tmp/in_target.d" ] && [ "${MOUNTPOINT}" != "/dev" ] && [ "${MOUNTPOINT}" != "/boot/efi" ]; then
         sudo ${_runcon} chroot ${TARGET_ROOT} \
             /usr/sbin/setfiles -F ${_dash_m} \
-            /etc/selinux/targeted/contexts/files/file_contexts ${MOUNTPOINT}
+            /etc/selinux/targeted/contexts/files/file_contexts ${MOUNTPOINT} \
+            || echo "Warning: Building on $(lsb_release -i | awk '{print $NF}'): SELinux commands might fail"
     fi
 done
 
