@@ -120,7 +120,8 @@ class TestCreateGraph(TestGraphGeneration):
         # manually created from deep_graph.yaml
         # Note unlike below, the sort here is stable because the graph
         # doesn't have multiple paths with only one partition
-        call_order_names = ['image0', 'root', 'mkfs_root',
+        call_order_names = ['image0', 'mbr_image0',
+                            'root', 'mkfs_root',
                             'mount_mkfs_root',
                             'fstab_mount_mkfs_root']
 

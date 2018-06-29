@@ -21,7 +21,9 @@ from diskimage_builder.block_device.blockdevice import BlockDeviceState
 from diskimage_builder.block_device.config import config_tree_to_graph
 from diskimage_builder.block_device.config import create_graph
 from diskimage_builder.block_device.level0.localloop import image_create
-from diskimage_builder.block_device.level1.partition import PartitionNode
+from diskimage_builder.block_device.level1.partitioning import PartitionNode
+from diskimage_builder.block_device.level1.partitioning import \
+    PartitionTableNode
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +61,7 @@ class TestGPT(tc.TestGraphGeneration):
         state['blockdev']['image0']['device'] = "/dev/loopX"
 
         for node in call_order:
-            if isinstance(node, PartitionNode):
+            if isinstance(node, (PartitionTableNode, PartitionNode)):
                 node.create()
 
         # check the parted call looks right

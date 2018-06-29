@@ -28,6 +28,9 @@ from diskimage_builder.block_device.level1.lvm import LvsNode
 from diskimage_builder.block_device.level1.lvm import PvsNode
 from diskimage_builder.block_device.level1.lvm import VgsNode
 from diskimage_builder.block_device.level1.partitioning import PartitionNode
+from diskimage_builder.block_device.level1.partitioning import \
+    PartitionTableNode
+
 
 logger = logging.getLogger(__name__)
 
@@ -475,9 +478,9 @@ class TestLVM(tc.TestGraphGeneration):
         image_create = ('diskimage_builder.block_device.level0.'
                         'localloop.LocalLoopNode.create')
         size_of_block = ('diskimage_builder.block_device.level1.'
-                         'partitioning.Partitioning._size_of_block_dev')
+                         'partitioning.PartitionTableNode._size_of_block_dev')
         create_mbr = ('diskimage_builder.block_device.level1.'
-                      'partitioning.Partitioning._create_mbr')
+                      'partitioning.PartitionTableNode._create_mbr')
 
         manager = mock.MagicMock()
         with mock.patch(exec_sudo_lvm) as mock_sudo_lvm, \
@@ -499,7 +502,7 @@ class TestLVM(tc.TestGraphGeneration):
                 # LVM creation; i.e. skipping mounting, mkfs, etc.
                 if isinstance(node, (LVMNode, PvsNode,
                                      VgsNode, LvsNode, LocalLoopNode,
-                                     PartitionNode)):
+                                     PartitionTableNode, PartitionNode)):
                     node.create()
                 else:
                     logger.debug("Skipping node for test: %s", node)
@@ -549,7 +552,7 @@ class TestLVM(tc.TestGraphGeneration):
                 for node in reverse_order:
                     if isinstance(node, (LVMNode, PvsNode,
                                          VgsNode, LvsNode, LocalLoopNode,
-                                         PartitionNode)):
+                                         PartitionNode, PartitionTableNode)):
                         getattr(node, phase)()
                     else:
                         logger.debug("Skipping node for test: %s", node)

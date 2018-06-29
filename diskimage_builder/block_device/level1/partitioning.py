@@ -18,7 +18,7 @@ import os
 from diskimage_builder.block_device.exception import \
     BlockDeviceSetupException
 from diskimage_builder.block_device.level1.mbr import MBR
-from diskimage_builder.block_device.level1.partition import PartitionNode
+from diskimage_builder.block_device.plugin import NodeBase
 from diskimage_builder.block_device.plugin import PluginBase
 from diskimage_builder.block_device.utils import exec_sudo
 from diskimage_builder.block_device.utils import parse_abs_size_spec
@@ -27,38 +27,48 @@ from diskimage_builder.block_device.utils import parse_rel_size_spec
 
 logger = logging.getLogger(__name__)
 
+#
+# We create a PartitionTableNode as the root of everything, which has
+# a dependency to the device it is labeling.  This node then depends
+# on all PartitionNodes it describes; additionally those
+# PartitionNodes are ordered amongst themselves too.
+#
+#                       loop device
+#                            |
+#                            v
+#                   PartitionTableNode
+#                            |
+#         +------------------+----------------+
+#         |                  |                |
+#         v                  v                v
+#        root -----------> second ---------> third  (ParitionNode)
+#         |                  |
+#         v                  v
+#    mount, mkfs etc...     ...
+#
+# So note that the PartitonNodes are really just place-holders for
+# dependencies; the actual partition table is only created once by
+# PartitionTableNode.create() (and similarly cleaned up by umount)
+#
 
-class Partitioning(PluginBase):
 
-    def __init__(self, config, default_config, state):
-        logger.debug("Creating Partitioning object; config [%s]", config)
-        super(Partitioning, self).__init__()
+class PartitionTableNode(NodeBase):
 
-        # Unlike other PluginBase we are somewhat persistent, as the
-        # partition nodes call back to us (see create() below).  We
-        # need to keep this reference.
-        self.state = state
+    def __init__(self, name, config, state, base, label, partitions):
+        '''A partition table
 
-        # Because using multiple partitions of one base is done
-        # within one object, there is the need to store a flag if the
-        # creation of the partitions was already done.
-        self.number_of_partitions = 0
-
-        # Parameter check
-        if 'base' not in config:
-            raise BlockDeviceSetupException("Partitioning config needs 'base'")
-        self.base = config['base']
-
-        if 'partitions' not in config:
-            raise BlockDeviceSetupException(
-                "Partitioning config needs 'partitions'")
-
-        if 'label' not in config:
-            raise BlockDeviceSetupException(
-                "Partitioning config needs 'label'")
-        self.label = config['label']
-        if self.label not in ("mbr", "gpt"):
-            raise BlockDeviceSetupException("Label must be 'mbr' or 'gpt'")
+        Arguments:
+        :param name: A symbolic name for this node
+        :param config: "partitioning" configuration entry
+        :param state: global state pointer
+        :param base: the parent device to make partition table on
+        :param label: the type of partition table to make
+        :param partitions: List of PartitionNode objects to place in this table
+        '''
+        super(PartitionTableNode, self).__init__(name, state)
+        self.base = base
+        self.label = label
+        self.partitions = partitions
 
         # It is VERY important to get the alignment correct. If this
         # is not correct, the disk performance might be very poor.
@@ -75,22 +85,12 @@ class Partitioning(PluginBase):
         if 'align' in config:
             self.align = parse_abs_size_spec(config['align'])
 
-        self.partitions = []
-        prev_partition = None
-
-        for part_cfg in config['partitions']:
-            np = PartitionNode(part_cfg, state, self, prev_partition)
-            self.partitions.append(np)
-            prev_partition = np
-
-    def get_nodes(self):
-        # return the list of partitions
-        return self.partitions
-
-    def _size_of_block_dev(self, dev):
-        with open(dev, "r") as fd:
-            fd.seek(0, 2)
-            return fd.tell()
+    def get_edges(self):
+        # we depend on the underlying device
+        edge_from = [self.base]
+        # all partitions for this table should depend on us
+        edge_to = [p.name for p in self.partitions]
+        return (edge_from, edge_to)
 
     def _create_mbr(self):
         """Create partitions with MBR"""
@@ -168,19 +168,12 @@ class Partitioning(PluginBase):
         logger.debug("cmd: %s", ' '.join(cmd))
         exec_sudo(cmd)
 
-    # not this is NOT a node and this is not called directly!  The
-    # create() calls in the partition nodes this plugin has
-    # created are calling back into this.
-    def create(self):
-        # This is a bit of a hack.  Each of the partitions is actually
-        # in the graph, so for every partition we get a create() call
-        # as the walk happens.  But we only need to create the
-        # partition table once...
-        self.number_of_partitions += 1
-        if self.number_of_partitions > 1:
-            logger.info("Not creating the partitions a second time.")
-            return
+    def _size_of_block_dev(self, dev):
+        with open(dev, "r") as fd:
+            fd.seek(0, 2)
+            return fd.tell()
 
+    def create(self):
         # the raw file on disk
         self.image_path = self.state['blockdev'][self.base]['image']
         # the /dev/loopX device of the parent
@@ -215,15 +208,122 @@ class Partitioning(PluginBase):
         return
 
     def umount(self):
-        # Remove the partition mappings made for the parent
-        # block-device by create() above.  This is called from the
-        # child PartitionNode umount.  Thus every
-        # partition calls it, but we only want to do it once when
-        # we know this is the very last partition
-        self.number_of_partitions -= 1
-        if self.number_of_partitions == 0:
-            exec_sudo(["kpartx", "-d",
-                       self.state['blockdev'][self.base]['device']])
+        exec_sudo(["kpartx", "-d",
+                   self.state['blockdev'][self.base]['device']])
 
     def cleanup(self):
         pass
+
+
+class PartitionNode(NodeBase):
+    flag_boot = 1
+    flag_primary = 2
+
+    def __init__(self, config, state, label, prev_partition):
+        '''An individual partition
+
+        Argments:
+        :param config: individual partition config entry
+        :param state: global state reference
+        :param label: the partition label type ('mbr' or 'efi')
+        :param prev_partition: link to previous PartitionNode for ordering
+        '''
+        super(PartitionNode, self).__init__(config['name'], state)
+
+        self.base = config['base']
+        self.label = label
+        self.prev_partition = prev_partition
+
+        # filter out some MBR only options for clarity
+        if self.label == 'gpt':
+            if 'flags' in config and 'primary' in config['flags']:
+                raise BlockDeviceSetupException(
+                    "Primary flag not supported for GPT partitions")
+
+        self.flags = set()
+        if 'flags' in config:
+            for f in config['flags']:
+                if f == 'boot':
+                    self.flags.add(self.flag_boot)
+                elif f == 'primary':
+                    self.flags.add(self.flag_primary)
+                else:
+                    raise BlockDeviceSetupException("Unknown flag: %s" % f)
+
+        if 'size' not in config:
+            raise BlockDeviceSetupException("No size in partition" % self.name)
+        self.size = config['size']
+
+        if self.label == 'gpt':
+            self.ptype = str(config['type']) if 'type' in config else '8300'
+        elif self.label == 'mbr':
+            self.ptype = int(config['type'], 16) if 'type' in config else 0x83
+
+    def get_flags(self):
+        return self.flags
+
+    def get_size(self):
+        return self.size
+
+    def get_type(self):
+        return self.ptype
+
+    def get_edges(self):
+        # The parent PartitionTableNode will depend on all partitions.
+        # We just need to keep a dependency chain between partitions
+        # so they stay ordered.
+        edge_from = []
+        edge_to = []
+        if self.prev_partition is not None:
+            edge_from.append(self.prev_partition.name)
+        return (edge_from, edge_to)
+
+    # Note the parent PartitionTableNode has done all the work
+    # of setting up the actual partition table.  These nodes
+    # are just place-holders for dependency purposes.
+    def create(self):
+        pass
+
+    def umount(self):
+        pass
+
+    def cleanup(self):
+        pass
+
+
+class Partitioning(PluginBase):
+    '''The partitioning plugin'''
+    def __init__(self, config, default_config, state):
+        logger.debug("Creating Partitioning object; config [%s]", config)
+        super(Partitioning, self).__init__()
+
+        # Parameter check
+        if 'base' not in config:
+            raise BlockDeviceSetupException("Partitioning config needs 'base'")
+        base = config['base']
+
+        if 'partitions' not in config:
+            raise BlockDeviceSetupException(
+                "Partitioning config needs 'partitions'")
+
+        if 'label' not in config:
+            raise BlockDeviceSetupException(
+                "Partitioning config needs 'label'")
+        label = config['label']
+        if label not in ("mbr", "gpt"):
+            raise BlockDeviceSetupException("Label must be 'mbr' or 'gpt'")
+
+        self.partitions = []
+        prev_partition = None
+
+        for part_cfg in config['partitions']:
+            np = PartitionNode(part_cfg, state, label, prev_partition)
+            self.partitions.append(np)
+            prev_partition = np
+
+        self.table = PartitionTableNode('%s_%s' % (label, base), config,
+                                        state, base, label, self.partitions)
+
+    def get_nodes(self):
+        # return the root node and list of partitions
+        return [self.table] + self.partitions
