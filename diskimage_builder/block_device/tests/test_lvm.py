@@ -24,7 +24,6 @@ from diskimage_builder.block_device.exception import \
 from diskimage_builder.block_device.level0.localloop import LocalLoopNode
 from diskimage_builder.block_device.level1.lvm import LVMNode
 from diskimage_builder.block_device.level1.lvm import LVMPlugin
-from diskimage_builder.block_device.level1.lvm import LVMUmountNode
 from diskimage_builder.block_device.level1.lvm import LvsNode
 from diskimage_builder.block_device.level1.lvm import PvsNode
 from diskimage_builder.block_device.level1.lvm import VgsNode
@@ -91,7 +90,7 @@ class TestLVM(tc.TestGraphGeneration):
             # XXX: This has not mocked out the "lower" layers of
             # creating the devices, which we're assuming works OK, nor
             # the upper layers.
-            if isinstance(node, (LVMNode, LVMUmountNode, PvsNode,
+            if isinstance(node, (LVMNode, PvsNode,
                                  VgsNode, LvsNode)):
                 # only the LVMNode actually does anything here...
                 node.create()
@@ -200,7 +199,7 @@ class TestLVM(tc.TestGraphGeneration):
                 # XXX: This has not mocked out the "lower" layers of
                 # creating the devices, which we're assuming works OK, nor
                 # the upper layers.
-                if isinstance(node, (LVMNode, LVMUmountNode, PvsNode,
+                if isinstance(node, (LVMNode, PvsNode,
                                      VgsNode, LvsNode)):
                     # only the PvsNode actually does anything here...
                     node.create()
@@ -308,11 +307,16 @@ class TestLVM(tc.TestGraphGeneration):
                 return r
             mock_temp.side_effect = new_tempfile
 
-            reverse_order = reversed(call_order)
-            for node in reverse_order:
-                if isinstance(node, (LVMNode, LVMUmountNode, PvsNode,
-                                     VgsNode, LvsNode)):
-                    node.umount()
+            def run_it(phase):
+                reverse_order = reversed(call_order)
+                for node in reverse_order:
+                    if isinstance(node, (LVMNode, PvsNode, VgsNode, LvsNode)):
+                        getattr(node, phase)()
+                    else:
+                        logger.debug("Skipping node for test: %s", node)
+
+            run_it('umount')
+            run_it('cleanup')
 
             cmd_sequence = [
                 # delete the lv's
@@ -367,8 +371,7 @@ class TestLVM(tc.TestGraphGeneration):
                 # XXX: This has not mocked out the "lower" layers of
                 # creating the devices, which we're assuming works OK, nor
                 # the upper layers.
-                if isinstance(node, (LVMNode, LVMUmountNode,
-                                     PvsNode, VgsNode, LvsNode)):
+                if isinstance(node, (LVMNode, PvsNode, VgsNode, LvsNode)):
                     # only the LVMNode actually does anything here...
                     node.create()
 
@@ -409,11 +412,16 @@ class TestLVM(tc.TestGraphGeneration):
                 return r
             mock_temp.side_effect = new_tempfile
 
-            reverse_order = reversed(call_order)
-            for node in reverse_order:
-                if isinstance(node, (LVMNode, LVMUmountNode,
-                                     PvsNode, VgsNode, LvsNode)):
-                    node.umount()
+            def run_it(phase):
+                reverse_order = reversed(call_order)
+                for node in reverse_order:
+                    if isinstance(node, (LVMNode, PvsNode, VgsNode, LvsNode)):
+                        getattr(node, phase)()
+                    else:
+                        logger.debug("Skipping node for test: %s", node)
+
+            run_it('umount')
+            run_it('cleanup')
 
             cmd_sequence = [
                 # deactivate lv's
@@ -489,7 +497,7 @@ class TestLVM(tc.TestGraphGeneration):
             for node in call_order:
                 # We're just keeping this to the partition setup and
                 # LVM creation; i.e. skipping mounting, mkfs, etc.
-                if isinstance(node, (LVMNode, LVMUmountNode, PvsNode,
+                if isinstance(node, (LVMNode, PvsNode,
                                      VgsNode, LvsNode, LocalLoopNode,
                                      PartitionNode)):
                     node.create()
@@ -536,14 +544,18 @@ class TestLVM(tc.TestGraphGeneration):
             manager.attach_mock(mock_sudo_part, 'sudo_part')
             manager.attach_mock(mock_sudo_loop, 'sudo_loop')
 
-            reverse_order = reversed(call_order)
-            for node in reverse_order:
-                if isinstance(node, (LVMNode, LVMUmountNode, PvsNode,
-                                     VgsNode, LvsNode, LocalLoopNode,
-                                     PartitionNode)):
-                    node.umount()
-                else:
-                    logger.debug("Skipping node for test: %s", node)
+            def run_it(phase):
+                reverse_order = reversed(call_order)
+                for node in reverse_order:
+                    if isinstance(node, (LVMNode, PvsNode,
+                                         VgsNode, LvsNode, LocalLoopNode,
+                                         PartitionNode)):
+                        getattr(node, phase)()
+                    else:
+                        logger.debug("Skipping node for test: %s", node)
+
+            run_it('umount')
+            run_it('cleanup')
 
             cmd_sequence = [
                 # deactivate LVM first
